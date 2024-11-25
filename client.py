@@ -1,0 +1,169 @@
+import requests
+import os
+import json
+import sys
+
+BASE_URL = "http://127.0.0.1:8000"
+
+def ping(user_id):
+    response = requests.post(f"{BASE_URL}/user/{user_id}/ping")
+    print(response.json())
+
+def echo(user_id, message):
+    response = requests.post(f"{BASE_URL}/user/{user_id}/echo", params={"message": message})
+    print(response.json())
+
+def set_value(user_id, key, value, value_type=None, expiry=None):
+    data = {
+        "key": key,
+        "value": value,
+        "type": value_type
+    }
+    if expiry:
+        data["expiry"] = expiry
+    response = requests.post(f"{BASE_URL}/user/{user_id}/set", json=data)
+    print(response.json())
+
+def set_file(user_id, key, file_path, expiry=None, is_dict=False):
+    if not os.path.exists(file_path):
+        print(f"Error: File not found: {file_path}")
+        return
+    
+    files = {"file": open(file_path, "rb")}
+    data = {"key": key, "is_dict": is_dict}
+    if expiry:
+        data["expiry"] = expiry
+    
+    try:
+        response = requests.post(f"{BASE_URL}/user/{user_id}/setfile", files=files, data=data)
+        print(response.json())
+    except Exception as e:
+        print(f"Error uploading file: {str(e)}")
+    finally:
+        files["file"].close()
+
+def get_file(user_id, key, save_path):
+    try:
+        response = requests.post(
+            f"{BASE_URL}/user/{user_id}/getfile",
+            params={"key": key},
+            stream=True
+        )
+        response.raise_for_status()
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        
+        # Save file content
+        with open(save_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        print(f"File saved to {save_path}")
+    except Exception as e:
+        print(f"Error downloading file: {str(e)}")
+
+def get_value(user_id, key):
+    response = requests.get(f"{BASE_URL}/user/{user_id}/get", params={"key": key})
+    print(response.json())
+
+def get_keys(user_id):
+    response = requests.get(f"{BASE_URL}/user/{user_id}/keys")
+    print(response.json())
+
+def get_info():
+    response = requests.get(f"{BASE_URL}/info")
+    print(response.json())
+
+def config_command(command, value):
+    response = requests.post(f"{BASE_URL}/config", json={"command": command, "value": value})
+    print(response.json())
+
+def psync_command(replica_id, offset):
+    response = requests.post(f"{BASE_URL}/psync", json={"replica_id": replica_id, "offset": offset})
+    print(response.json())
+
+def get_all_users():
+    response = requests.get(f"{BASE_URL}/users")
+    print(response.json())
+
+def main():
+    # Command examples in help text
+    help_text = """
+    Available commands:
+    - ping <user_id>
+    - echo <user_id> <message>
+    - set <user_id> <key> <value> [type] [expiry]
+    - setfile <user_id> <key> <file_path> [expiry] [is_dict]
+    - getfile <user_id> <key> <save_path>
+    - get <user_id> <key>
+    - keys <user_id>
+    - info
+    - config <command> <value>
+    - psync <replica_id> <offset>
+    - users
+    - help
+    - exit
+    
+    Examples:
+    > ping user1
+    > echo user1 hello
+    > set user1 count 42 int
+    > set user1 price 99.99 float
+    > set user1 items ["a","b","c"] list
+    > set user1 config {"a":1} dict
+    > setfile user1 myfile /path/to/file.pdf 3600
+    > setfile user1 mydict /path/to/dict.json 3600 True
+    > getfile user1 myfile /path/to/save/downloaded.pdf
+    > get user1 mykey
+    > keys user1
+    """
+
+    while True:
+        command = input("Enter command: ").strip().split()
+        if not command:
+            continue
+        
+        cmd = command[0].lower()
+        
+        try:
+            if cmd == "help":
+                print(help_text)
+            elif cmd == "ping" and len(command) == 2:
+                ping(command[1])
+            elif cmd == "echo" and len(command) == 3:
+                echo(command[1], command[2])
+            elif cmd == "set" and len(command) in [4, 5, 6]:
+                expiry = int(command[5]) if len(command) == 6 else None
+                value_type = command[4] if len(command) >= 5 else None
+                set_value(command[1], command[2], command[3], value_type, expiry)
+            elif cmd == "setfile" and len(command) in [4, 5, 6]:
+                expiry = int(command[4]) if len(command) >= 5 else None
+                is_dict = command[5].lower() == 'true' if len(command) == 6 else False
+                set_file(command[1], command[2], command[3], expiry, is_dict)
+            elif cmd == "getfile" and len(command) == 4:
+                get_file(command[1], command[2], command[3])
+            elif cmd == "get" and len(command) == 3:
+                get_value(command[1], command[2])
+            elif cmd == "keys" and len(command) == 2:
+                get_keys(command[1])
+            elif cmd == "info":
+                get_info()
+            elif cmd == "config" and len(command) == 3:
+                config_command(command[1], command[2])
+            elif cmd == "psync" and len(command) == 3:
+                psync_command(command[1], command[2])
+            elif cmd == "users":
+                get_all_users()
+            elif cmd == "exit":
+                break
+            else:
+                print("Invalid command. Type 'help' for usage.")
+        except Exception as e:
+            print(f"Error executing command: {str(e)}")
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if len(args) >= 1:
+        BASE_URL = f"http://{args[0]}:8000"
+    main()
