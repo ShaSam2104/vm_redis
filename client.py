@@ -86,6 +86,62 @@ def psync_command(replica_id, offset):
 def get_all_users():
     response = requests.get(f"{BASE_URL}/users")
     print(response.json())
+def delete_key(user_id: str, key: str):
+    try:
+        response = requests.delete(f"{BASE_URL}/user/{user_id}/key/{key}")
+        print(response.json())
+    except Exception as e:
+        print(f"Error deleting key: {str(e)}")
+
+def delete_user(user_id: str):
+    try:
+        response = requests.delete(f"{BASE_URL}/user/{user_id}")
+        print(response.json())
+    except Exception as e:
+        print(f"Error deleting user: {str(e)}")
+
+def delete_all_users():
+    try:
+        response = requests.delete(f"{BASE_URL}/users")
+        print(response.json())
+    except Exception as e:
+        print(f"Error deleting all users: {str(e)}")
+def download_rdb(user_id=None, save_path=None):
+    url = f"{BASE_URL}/download_rdb"
+    if user_id:
+        url += f"/{user_id}"
+    params = {"path": save_path} if save_path else {}
+    response = requests.get(url, params=params, stream=True)
+    
+    if save_path:
+        with open(save_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print(f"RDB file saved to {save_path}")
+    else:
+        save_path = f"{user_id or 'all_users'}_dump.rdb"
+        with open(save_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print(f"RDB file saved to {save_path}")
+
+def upload_rdb(file_path, user_id=None):
+    if not os.path.exists(file_path):
+        print(f"Error: File not found: {file_path}")
+        return
+    
+    files = {"file": open(file_path, "rb")}
+    url = f"{BASE_URL}/upload_rdb"
+    if user_id:
+        url += f"/{user_id}"
+    
+    try:
+        response = requests.post(url, files=files)
+        print(response.json())
+    except Exception as e:
+        print(f"Error uploading RDB file: {str(e)}")
+    finally:
+        files["file"].close()
 
 def main():
     # Command examples in help text
@@ -102,8 +158,13 @@ def main():
     - config <command> <value>
     - psync <replica_id> <offset>
     - users
+    - download_rdb [user_id] [save_path]
+    - upload_rdb <file_path> [user_id]
     - help
     - exit
+    - delete_key <user_id> <key>
+    - delete_user <user_id>
+    - delete_users
     
     Examples:
     > ping user1
@@ -155,8 +216,18 @@ def main():
                 psync_command(command[1], command[2])
             elif cmd == "users":
                 get_all_users()
+            elif cmd == "download_rdb":
+                download_rdb(command[1] if len(command) >= 2 else None, command[2] if len(command) == 3 else None)
+            elif cmd == "upload_rdb" and len(command) in [2, 3]:
+                upload_rdb(command[1], command[2] if len(command) == 3 else None)
             elif cmd == "exit":
                 break
+            elif cmd == "delete_key" and len(command) == 3:
+                delete_key(command[1], command[2])
+            elif cmd == "delete_user" and len(command) == 2:
+                delete_user(command[1])
+            elif cmd == "delete_users":
+                delete_all_users()
             else:
                 print("Invalid command. Type 'help' for usage.")
         except Exception as e:

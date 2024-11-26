@@ -10,7 +10,8 @@ import os
 from fastapi.middleware.cors import CORSMiddleware
 import io
 import json
-from typing import Any, Union,Dict, Optional, Set
+from typing import Any, Union, Dict, Optional, Set
+import pickle
 
 app = FastAPI()
 
@@ -146,6 +147,28 @@ async def get_info():
         "users_count": len(user_data),
     }
     return info
+@app.delete("/user/{user_id}/key/{key}")
+async def delete_key(user_id: str, key: str):
+    if user_id not in user_data:
+        raise HTTPException(status_code=404, detail="User not found")
+    if key not in user_data[user_id]:
+        raise HTTPException(status_code=404, detail="Key not found")
+    
+    del user_data[user_id][key]
+    return {"response": f"Key '{key}' deleted successfully"}
+
+@app.delete("/user/{user_id}")
+async def delete_user(user_id: str):
+    if user_id not in user_data:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    del user_data[user_id]
+    return {"response": f"User '{user_id}' deleted successfully"}
+
+@app.delete("/users")
+async def delete_all_users():
+    user_data.clear()
+    return {"response": "All users deleted successfully"}
 
 @app.post("/config")
 async def config_command(command: str, value: str):
@@ -199,6 +222,84 @@ async def get_file(user_id: str, key: str):
             status_code=500,
             detail=f"Internal Server Error: {str(e)}"
         )   
+
+@app.get("/download_rdb/{user_id}")
+async def download_user_rdb(user_id: str, path: Optional[str] = None):
+    if user_id not in user_data:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    rdb_data = {user_id: user_data[user_id]}
+    rdb_bytes = pickle.dumps(rdb_data)
+    
+    if path:
+        with open(path, 'wb') as f:
+            f.write(rdb_bytes)
+        return {"response": f"RDB file saved to {path}"}
+    
+    return StreamingResponse(io.BytesIO(rdb_bytes), media_type="application/octet-stream", headers={
+        "Content-Disposition": f"attachment; filename={user_id}_dump.rdb"
+    })
+
+@app.get("/download_rdb")
+async def download_all_rdb(path: Optional[str] = None):
+    rdb_bytes = pickle.dumps(user_data)
+    
+    if path:
+        with open(path, 'wb') as f:
+            f.write(rdb_bytes)
+        return {"response": f"RDB file saved to {path}"}
+    
+    return StreamingResponse(io.BytesIO(rdb_bytes), media_type="application/octet-stream", headers={
+        "Content-Disposition": "attachment; filename=all_users_dump.rdb"
+    })
+
+@app.post("/upload_rdb/{user_id}")
+async def upload_user_rdb(user_id: str, file: Optional[UploadFile] = None, path: Optional[str] = None):
+    try:
+        if file:
+            content = await file.read()
+        elif path:
+            with open(path, 'rb') as f:
+                content = f.read()
+        else:
+            raise HTTPException(status_code=400, detail="Either file or path must be provided")
+        
+        rdb_data = pickle.loads(content)
+        
+        if user_id in rdb_data:
+            user_data[user_id] = {**user_data.get(user_id, {}), **rdb_data[user_id]}
+        else:
+            raise HTTPException(status_code=400, detail="RDB file does not contain the specified user data")
+        
+        return {"response": "OK"}
+    except Exception as e:
+        logger.error(f"Error uploading RDB file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+
+@app.post("/upload_rdb")
+async def upload_all_rdb(file: Optional[UploadFile] = None, path: Optional[str] = None):
+    try:
+        if file:
+            content = await file.read()
+        elif path:
+            with open(path, 'rb') as f:
+                content = f.read()
+        else:
+            raise HTTPException(status_code=400, detail="Either file or path must be provided")
+        
+        rdb_data = pickle.loads(content)
+        
+        for user_id, data in rdb_data.items():
+            if user_id in user_data:
+                user_data[user_id] = {**user_data[user_id], **data}
+            else:
+                user_data[user_id] = data
+        
+        return {"response": "OK"}
+    except Exception as e:
+        logger.error(f"Error uploading RDB file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn
