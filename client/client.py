@@ -1,7 +1,6 @@
+import sys
 import requests
 import os
-import json
-import sys
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -13,24 +12,20 @@ def echo(user_id, message):
     response = requests.post(f"{BASE_URL}/user/{user_id}/echo", params={"message": message})
     print(response.json())
 
-def set_value(user_id, key, value, value_type=None, expiry=None):
-    data = {
-        "key": key,
-        "value": value,
-        "type": value_type
-    }
+def set_value(user_id, key, value, expiry=None):
+    data = {"key": key, "value": value}
     if expiry:
         data["expiry"] = expiry
     response = requests.post(f"{BASE_URL}/user/{user_id}/set", json=data)
     print(response.json())
 
-def set_file(user_id, key, file_path, expiry=None, is_dict=False):
+def set_file(user_id, key, file_path, expiry=None):
     if not os.path.exists(file_path):
         print(f"Error: File not found: {file_path}")
         return
     
     files = {"file": open(file_path, "rb")}
-    data = {"key": key, "is_dict": is_dict}
+    data = {"key": key}
     if expiry:
         data["expiry"] = expiry
     
@@ -149,8 +144,8 @@ def main():
     Available commands:
     - ping <user_id>
     - echo <user_id> <message>
-    - set <user_id> <key> <value> [type] [expiry]
-    - setfile <user_id> <key> <file_path> [expiry] [is_dict]
+    - set <user_id> <key> <value> [expiry]
+    - setfile <user_id> <key> <file_path> [expiry]
     - getfile <user_id> <key> <save_path>
     - get <user_id> <key>
     - keys <user_id>
@@ -169,12 +164,8 @@ def main():
     Examples:
     > ping user1
     > echo user1 hello
-    > set user1 count 42 int
-    > set user1 price 99.99 float
-    > set user1 items ["a","b","c"] list
-    > set user1 config {"a":1} dict
+    > set user1 mykey myvalue 60
     > setfile user1 myfile /path/to/file.pdf 3600
-    > setfile user1 mydict /path/to/dict.json 3600 True
     > getfile user1 myfile /path/to/save/downloaded.pdf
     > get user1 mykey
     > keys user1
@@ -194,14 +185,12 @@ def main():
                 ping(command[1])
             elif cmd == "echo" and len(command) == 3:
                 echo(command[1], command[2])
-            elif cmd == "set" and len(command) in [4, 5, 6]:
-                expiry = int(command[5]) if len(command) == 6 else None
-                value_type = command[4] if len(command) >= 5 else None
-                set_value(command[1], command[2], command[3], value_type, expiry)
-            elif cmd == "setfile" and len(command) in [4, 5, 6]:
-                expiry = int(command[4]) if len(command) >= 5 else None
-                is_dict = command[5].lower() == 'true' if len(command) == 6 else False
-                set_file(command[1], command[2], command[3], expiry, is_dict)
+            elif cmd == "set" and len(command) in [4, 5]:
+                expiry = int(command[4]) if len(command) == 5 else None
+                set_value(command[1], command[2], command[3], expiry)
+            elif cmd == "setfile" and len(command) in [4, 5]:
+                expiry = int(command[4]) if len(command) == 5 else None
+                set_file(command[1], command[2], command[3], expiry)
             elif cmd == "getfile" and len(command) == 4:
                 get_file(command[1], command[2], command[3])
             elif cmd == "get" and len(command) == 3:
