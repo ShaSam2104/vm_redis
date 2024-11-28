@@ -3,24 +3,16 @@ import requests
 import os
 
 BASE_URL = "http://127.0.0.1:8000"
+
 def ping(user_id):
-    if not user_id:
-        print("Error: user_id is required")
-        return
     response = requests.post(f"{BASE_URL}/user/{user_id}/ping")
     print(response.json())
 
 def echo(user_id, message):
-    if not user_id:
-        print("Error: user_id is required")
-        return
     response = requests.post(f"{BASE_URL}/user/{user_id}/echo", params={"message": message})
     print(response.json())
 
 def set_value(user_id, key, value, expiry=None):
-    if not user_id:
-        print("Error: user_id is required")
-        return
     data = {"key": key, "value": value}
     if expiry:
         data["expiry"] = expiry
@@ -28,9 +20,6 @@ def set_value(user_id, key, value, expiry=None):
     print(response.json())
 
 def set_file(user_id, key, file_path, expiry=None):
-    if not user_id:
-        print("Error: user_id is required")
-        return
     if not os.path.exists(file_path):
         print(f"Error: File not found: {file_path}")
         return
@@ -49,27 +38,31 @@ def set_file(user_id, key, file_path, expiry=None):
         files["file"].close()
 
 def get_file(user_id, key, save_path):
-    if not user_id:
-        print("Error: user_id is required")
-        return
-    response = requests.get(f"{BASE_URL}/user/{user_id}/getfile", params={"key": key})
-    if response.status_code == 200:
-        with open(save_path, "wb") as f:
-            f.write(response.content)
+    try:
+        response = requests.post(
+            f"{BASE_URL}/user/{user_id}/getfile",
+            params={"key": key},
+            stream=True
+        )
+        response.raise_for_status()
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        
+        # Save file content
+        with open(save_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
         print(f"File saved to {save_path}")
-    else:
-        print(f"Error: {response.json()}")
+    except Exception as e:
+        print(f"Error downloading file: {str(e)}")
+
 def get_value(user_id, key):
-    if not user_id:
-        print("Error: user_id is required")
-        return
     response = requests.get(f"{BASE_URL}/user/{user_id}/get", params={"key": key})
     print(response.json())
 
 def get_keys(user_id):
-    if not user_id:
-        print("Error: user_id is required")
-        return
     response = requests.get(f"{BASE_URL}/user/{user_id}/keys")
     print(response.json())
 
@@ -77,10 +70,18 @@ def get_info():
     response = requests.get(f"{BASE_URL}/info")
     print(response.json())
 
+def config_command(command, value):
+    response = requests.post(f"{BASE_URL}/config", json={"command": command, "value": value})
+    print(response.json())
+
+def psync_command(replica_id, offset):
+    response = requests.post(f"{BASE_URL}/psync", json={"replica_id": replica_id, "offset": offset})
+    print(response.json())
+
+def get_all_users():
+    response = requests.get(f"{BASE_URL}/users")
+    print(response.json())
 def delete_key(user_id: str, key: str):
-    if not user_id:
-        print("Error: user_id is required")
-        return
     try:
         response = requests.delete(f"{BASE_URL}/user/{user_id}/key/{key}")
         print(response.json())
@@ -88,20 +89,22 @@ def delete_key(user_id: str, key: str):
         print(f"Error deleting key: {str(e)}")
 
 def delete_user(user_id: str):
-    if not user_id:
-        print("Error: user_id is required")
-        return
     try:
         response = requests.delete(f"{BASE_URL}/user/{user_id}")
         print(response.json())
     except Exception as e:
         print(f"Error deleting user: {str(e)}")
 
-def download_rdb(user_id: str, save_path=None):
-    if not user_id:
-        print("Error: user_id is required")
-        return
-    url = f"{BASE_URL}/download_rdb/{user_id}"
+def delete_all_users():
+    try:
+        response = requests.delete(f"{BASE_URL}/users")
+        print(response.json())
+    except Exception as e:
+        print(f"Error deleting all users: {str(e)}")
+def download_rdb(user_id=None, save_path=None):
+    url = f"{BASE_URL}/download_rdb"
+    if user_id:
+        url += f"/{user_id}"
     params = {"path": save_path} if save_path else {}
     response = requests.get(url, params=params, stream=True)
     
@@ -117,16 +120,15 @@ def download_rdb(user_id: str, save_path=None):
                 f.write(chunk)
         print(f"RDB file saved to {save_path}")
 
-def upload_rdb(file_path: str, user_id: str):
-    if not user_id:
-        print("Error: user_id is required")
-        return
+def upload_rdb(file_path, user_id=None):
     if not os.path.exists(file_path):
         print(f"Error: File not found: {file_path}")
         return
     
     files = {"file": open(file_path, "rb")}
     url = f"{BASE_URL}/upload_rdb"
+    if user_id:
+        url += f"/{user_id}"
     
     try:
         response = requests.post(url, files=files)
@@ -197,6 +199,12 @@ def main():
                 get_keys(command[1])
             elif cmd == "info":
                 get_info()
+            elif cmd == "config" and len(command) == 3:
+                config_command(command[1], command[2])
+            elif cmd == "psync" and len(command) == 3:
+                psync_command(command[1], command[2])
+            elif cmd == "users":
+                get_all_users()
             elif cmd == "download_rdb":
                 download_rdb(command[1] if len(command) >= 2 else None, command[2] if len(command) == 3 else None)
             elif cmd == "upload_rdb" and len(command) in [2, 3]:
@@ -207,6 +215,8 @@ def main():
                 delete_key(command[1], command[2])
             elif cmd == "delete_user" and len(command) == 2:
                 delete_user(command[1])
+            elif cmd == "delete_users":
+                delete_all_users()
             else:
                 print("Invalid command. Type 'help' for usage.")
         except Exception as e:
