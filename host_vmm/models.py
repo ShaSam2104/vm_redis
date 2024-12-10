@@ -1,5 +1,6 @@
-from typing import Any
+from fastapi import Header
 from pydantic import BaseModel
+from typing import Any, Annotated
 
 class Response(BaseModel):
     error: str | None
@@ -11,8 +12,11 @@ class Message(BaseModel):
     value: Any
     type: str | None
 
+class User(BaseModel):
+
+    userName: str
+    password: str
+
 class Auth(BaseModel):
 
-    pk: str
-    hash: str
-    salt: str
+    token: Annotated[str, Header()]
