@@ -1,115 +1,30 @@
 import sys
 import requests
 import os
-import json
-import hashlib
-import ecdsa
-from pathlib import Path
-BASE_URL = "http://10.20.24.88:8000"
-VM_URL = "http://127.0.0.1:8000"
-CREDENTIALS_FILE = Path.home() / ".cache" / "credentials.json"
 
-class AuthClient:
-    def __init__(self):
-        self.base_url = BASE_URL
-        self.credentials = self.load_credentials()
-        self.ensure_auth()
-        if self.credentials:
-            self.base_url = f"http://{self.credentials['vm_ip']}:8000"
-    
-    def load_credentials(self):
-        if CREDENTIALS_FILE.exists():
-            with open(CREDENTIALS_FILE) as f:
-                return json.load(f)
-        return None
-    
-    def save_credentials(self, creds):
-        CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(CREDENTIALS_FILE, 'w') as f:
-            json.dump(creds, f)
-        self.credentials = creds
-    
-    def ensure_auth(self):
-        if not self.credentials:
-            self.handle_signup()
-    
-    def generate_keypair(self, passphrase):
-        signing_key = ecdsa.SigningKey.from_string(
-            hashlib.sha256(passphrase.encode("utf-8")).hexdigest()[:24].encode("utf-8")
-        )
-        verifying_key = signing_key.get_verifying_key()
-        return {
-            'private_key': signing_key.to_string().hex(),
-            'public_key': verifying_key.to_string().hex(),
-            'passphrase': passphrase
-        }
-    def handle_signup(self):
-        passphrase = input("Enter passphrase for signup: ")
-        keypair = self.generate_keypair(passphrase)
-        
-        response = requests.post(f"{BASE_URL}/signup", json={
-            "public_key": keypair['public_key']
-        })
-        
-        if response.status_code == 200:
-            creds = {**keypair, 'vm_ip': response.json()['vm_ip']}
-            self.save_credentials(creds)
-            self.base_url = f"http://{creds['vm_ip']}:8000"
-            print("Signup successful!")
-        else:
-            print("Signup failed:", response.json())
-            sys.exit(1)
-    
-    def sign_request(self, body):
-        # Generate salt from request body
-        salt = hashlib.sha256(str(body).encode()).hexdigest()
-        
-        # Sign using private key
-        signing_key = ecdsa.SigningKey.from_string(
-            bytes.fromhex(self.credentials['private_key'])
-        )
-        signature = signing_key.sign(salt.encode()).hex()
-        
-        return {
-            "public_key": self.credentials['public_key'],
-            "salt": salt,
-            "signature": signature
-        }
-    def authenticated_request(self, method, url, **kwargs):
-        # Replace BASE_URL with VM URL for all authenticated requests
-        url = url.replace(BASE_URL, self.base_url)
-        
-        body = kwargs.get('json', kwargs.get('data', ''))
-        auth_headers = self.sign_request(body)
-        
-        headers = kwargs.pop('headers', {})
-        headers.update(auth_headers)
-        kwargs['headers'] = headers
-        
-        return requests.request(method, url, **kwargs)
-def ping(client):
-    response = client.authenticated_request(
-        'POST',
-        f"{BASE_URL}/user/{client.credentials['public_key']}/ping"
-    )
+BASE_URL = "http://127.0.0.1:8000"
+def ping(user_id):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    response = requests.post(f"{BASE_URL}/user/{user_id}/ping")
     print(response.json())
 
-def echo(client, message):
-    response = client.authenticated_request(
-        'POST', 
-        f"{BASE_URL}/user/{client.credentials['public_key']}/echo",
-        params={"message": message}
-    )
+def echo(user_id, message):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    response = requests.post(f"{BASE_URL}/user/{user_id}/echo", params={"message": message})
     print(response.json())
 
-def set_value(client, key, value,type=None, expiry=None):
-    data = {"key": key, "value": value, "type": type}
+def set_value(user_id, key, value, expiry=None):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    data = {"key": key, "value": value}
     if expiry:
         data["expiry"] = expiry
-        response = client.authenticated_request(
-        'POST', 
-        f"{BASE_URL}/user/{client.credentials['public_key']}/set", 
-        json=data)
+    response = requests.post(f"{BASE_URL}/user/{user_id}/set", json=data)
     print(response.json())
 
 def set_file(user_id, key, file_path, expiry=None):
@@ -150,25 +65,44 @@ def get_file(user_id, key, save_path):
         print(f"File saved to {save_path}")
     else:
         print(f"Error: {response.json()}")
-def get_value(client, key):
-    response = client.authenticated_request('GET', f"{BASE_URL}/user/{client.credentials['public_key']}/get", params={"key": key})
+def get_value(user_id, key):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    response = requests.get(f"{BASE_URL}/user/{user_id}/get", params={"key": key})
     print(response.json())
 
-def get_keys(client):
-    response = client.authenticated_request('GET', f"{BASE_URL}/user/{client.credentials['public_key']}/keys")
+def get_keys(user_id):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    response = requests.get(f"{BASE_URL}/user/{user_id}/keys")
     print(response.json())
 
-def get_info(client):
-    response = client.authenticated_request('GET', f"{BASE_URL}/info")
+def get_info():
+    response = requests.get(f"{BASE_URL}/info")
     print(response.json())
 
-def delete_key(client, key):
-    response = client.authenticated_request('DELETE', f"{BASE_URL}/user/{client.credentials['public_key']}/key/{key}")
-    print(response.json())
+def delete_key(user_id: str, key: str):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    try:
+        response = requests.delete(f"{BASE_URL}/user/{user_id}/key/{key}")
+        print(response.json())
+    except Exception as e:
+        print(f"Error deleting key: {str(e)}")
 
-def delete_user(client):
-    response = client.authenticated_request('DELETE', f"{BASE_URL}/user/{client.credentials['public_key']}")
-    print(response.json())
+def delete_user(user_id: str):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    try:
+        response = requests.delete(f"{BASE_URL}/user/{user_id}")
+        print(response.json())
+    except Exception as e:
+        print(f"Error deleting user: {str(e)}")
+
 def download_rdb(user_id: str, save_path=None):
     if not user_id:
         print("Error: user_id is required")
@@ -208,20 +142,30 @@ def upload_rdb(file_path: str, user_id: str):
     finally:
         files["file"].close()
 
-def get_storage_usage(client):
-    response = client.authenticated_request('GET', f"{BASE_URL}/user/{client.credentials['public_key']}/usage")
-    if response.status_code == 200:
-        data = response.json()
-        print(f"Storage used: {data['storage_used']/1024/1024:.2f}MB")
-        print(f"Storage limit: {data['storage_limit']/1024/1024:.2f}MB")
-        print(f"Subscription tier: {data['subscription']}")
-    else:
-        print(f"Error: {response.text}")
+def get_storage_usage(user_id):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    try:
+        response = requests.get(f"{BASE_URL}/user/{user_id}/usage")
+        if response.status_code == 200:
+            data = response.json()
+            print(f"Storage used: {data['storage_used']/1024/1024:.2f}MB")
+            print(f"Storage limit: {data['storage_limit']/1024/1024:.2f}MB")
+            print(f"Subscription tier: {data['subscription']}")
+        else:
+            print(f"Error: {response.text}")
+    except requests.exceptions.RequestException as e:
+        print(f"Network error: {str(e)}")
+    except Exception as e:
+        print(f"Error: {str(e)}")
 
-def update_subscription(client, tier):
-    response = client.authenticated_request(
-        'POST',
-        f"{BASE_URL}/user/{client.credentials['public_key']}/subscription",
+def update_subscription(user_id, tier):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    response = requests.post(
+        f"{BASE_URL}/user/{user_id}/subscription",
         params={"tier": tier}
     )
     print(response.json())
@@ -258,7 +202,7 @@ def main():
     > get user1 mykey
     > keys user1
     """
-    client = AuthClient()
+
     while True:
         command = input("Enter command: ").strip().split()
         if not command:
@@ -269,18 +213,19 @@ def main():
         try:
             if cmd == "help":
                 print(help_text)
-            elif cmd == "ping":
-                ping(client)
-            elif cmd == "echo" and len(command) == 2:
-                echo(client, command[1], command[2])
-            elif cmd == "set" and len(command) >= 3:
+            elif cmd == "ping" and len(command) == 2:
+                ping(command[1])
+            elif cmd == "echo" and len(command) == 3:
+                echo(command[1], command[2])
+            elif cmd == "set" and len(command) >= 4:
                 expiry = None
                 type = None
-                if len(command) >= 4 and command[3].isdigit():
-                    expiry = int(command[3])
-                if len(command) >= 5:
-                    type = command[4]
-                set_value(client, command[1], command[2], type, expiry)
+                if len(command) >= 5 and command[4].isdigit():
+                    expiry = int(command[4])
+                if len(command) >= 6:
+                    type = command[5]
+                set_value(command[1], command[2], command[3], type, expiry)
+                set_value(command[1], command[2], command[3], expiry)
             elif cmd == "setfile" and len(command) in [4, 5]:
                 expiry = int(command[4]) if len(command) == 5 else None
                 set_file(command[1], command[2], command[3], expiry)
