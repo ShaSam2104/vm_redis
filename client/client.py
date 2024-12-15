@@ -62,7 +62,7 @@ class AuthClient:
     
     def sign_request(self, body):
         # Generate salt from request body
-        salt = hashlib.sha256(str(body).encode()).hexdigest()
+        salt = hashlib.sha256(str(body).encode("utf-8")).hexdigest().encode("utf-8")
         
         # Sign using private key
         signing_key = ecdsa.SigningKey.from_string(
