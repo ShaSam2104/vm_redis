@@ -8,9 +8,11 @@ class Response(BaseModel):
 
 class Message(BaseModel):
     
-    key: str | None
-    value: Any
+    key: str
+    value: Any | None
     type: str | None
+    expiry: int | None
+    salt: str | None
 
 class User(BaseModel):
 
