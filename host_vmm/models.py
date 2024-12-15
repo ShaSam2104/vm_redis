@@ -15,8 +15,6 @@ class Message(BaseModel):
     salt: str | None
 
 class User(BaseModel):
-
-    userName: str
     password: str
 
 class Auth(BaseModel):

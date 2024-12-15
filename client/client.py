@@ -112,10 +112,7 @@ def set_value(client, key, value,type=None, expiry=None):
         json=data)
     print(response.json())
 
-def set_file(user_id, key, file_path, expiry=None):
-    if not user_id:
-        print("Error: user_id is required")
-        return
+def set_file(client, key, file_path, expiry=None):
     if not os.path.exists(file_path):
         print(f"Error: File not found: {file_path}")
         return
@@ -126,7 +123,7 @@ def set_file(user_id, key, file_path, expiry=None):
         if expiry:
             data["expiry"] = expiry
         
-        response = requests.post(f"{BASE_URL}/user/{user_id}/setfile", files=files, data=data)
+        response = requests.post(f"{BASE_URL}/user/{client.credentials['public_key']}/setfile", files=files, data=data)
         if response.status_code == 200:
             print(response.json())
         else:
@@ -139,11 +136,8 @@ def set_file(user_id, key, file_path, expiry=None):
         if 'files' in locals():
             files["file"].close()
 
-def get_file(user_id, key, save_path):
-    if not user_id:
-        print("Error: user_id is required")
-        return
-    response = requests.get(f"{BASE_URL}/user/{user_id}/getfile", params={"key": key})
+def get_file(client, key, save_path):
+    response = requests.get(f"{BASE_URL}/user/{client.credentials['public_key']}/getfile", params={"key": key})
     if response.status_code == 200:
         with open(save_path, "wb") as f:
             f.write(response.content)
@@ -169,11 +163,8 @@ def delete_key(client, key):
 def delete_user(client):
     response = client.authenticated_request('DELETE', f"{BASE_URL}/user/{client.credentials['public_key']}")
     print(response.json())
-def download_rdb(user_id: str, save_path=None):
-    if not user_id:
-        print("Error: user_id is required")
-        return
-    url = f"{BASE_URL}/download_rdb/{user_id}"
+def download_rdb(client, save_path=None):
+    url = f"{BASE_URL}/download_rdb/{client.credentials['public_key']}"
     params = {"path": save_path} if save_path else {}
     response = requests.get(url, params=params, stream=True)
     
@@ -183,23 +174,19 @@ def download_rdb(user_id: str, save_path=None):
                 f.write(chunk)
         print(f"RDB file saved to {save_path}")
     else:
-        save_path = f"{user_id or 'all_users'}_dump.rdb"
+        save_path = f"{client.credentials['public_key'] or 'all_users'}_dump.rdb"
         with open(save_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
         print(f"RDB file saved to {save_path}")
 
-def upload_rdb(file_path: str, user_id: str):
-    if not user_id:
-        print("Error: user_id is required")
-        return
+def upload_rdb(client,file_path: str):
     if not os.path.exists(file_path):
         print(f"Error: File not found: {file_path}")
         return
     
     files = {"file": open(file_path, "rb")}
     url = f"{BASE_URL}/upload_rdb"
-    
     try:
         response = requests.post(url, files=files)
         print(response.json())
@@ -229,13 +216,13 @@ def main():
     # Command examples in help text
     help_text = """
     Available commands:
-    - ping <user_id>
-    - echo <user_id> <message>
-    - set <user_id> <key> <value> [expiry]
-    - setfile <user_id> <key> <file_path> [expiry]
-    - getfile <user_id> <key> <save_path>
-    - get <user_id> <key>
-    - keys <user_id>
+    - ping
+    - echo <message>
+    - set <key> <value> [expiry]
+    - setfile <key> <file_path> [expiry]
+    - getfile <key> <save_path>
+    - get <key>
+    - keys 
     - info
     - config <command> <value>
     - psync <replica_id> <offset>
@@ -244,11 +231,11 @@ def main():
     - upload_rdb <file_path> [user_id]
     - help
     - exit
-    - delete_key <user_id> <key>
-    - delete_user <user_id>
+    - delete_key <key>
+    - delete_user 
     - delete_users
-    - usage <user_id>            # Get storage usage stats
-    - upgrade <user_id> <tier>   # Change subscription tier (basic/premium)   
+    - usage             # Get storage usage stats
+    - upgrade <tier>   # Change subscription tier (basic/premium)   
     Examples:
     > ping user1
     > echo user1 hello
@@ -271,7 +258,7 @@ def main():
                 print(help_text)
             elif cmd == "ping":
                 ping(client)
-            elif cmd == "echo" and len(command) == 2:
+            elif cmd == "echo" and len(command) == 3:
                 echo(client, command[1], command[2])
             elif cmd == "set" and len(command) >= 3:
                 expiry = None
@@ -281,31 +268,31 @@ def main():
                 if len(command) >= 5:
                     type = command[4]
                 set_value(client, command[1], command[2], type, expiry)
-            elif cmd == "setfile" and len(command) in [4, 5]:
-                expiry = int(command[4]) if len(command) == 5 else None
-                set_file(command[1], command[2], command[3], expiry)
-            elif cmd == "getfile" and len(command) == 4:
-                get_file(command[1], command[2], command[3])
-            elif cmd == "get" and len(command) == 3:
-                get_value(command[1], command[2])
-            elif cmd == "keys" and len(command) == 2:
-                get_keys(command[1])
+            elif cmd == "setfile" and len(command) in [3, 4]:
+                expiry = int(command[4]) if len(command) == 4 else None
+                set_file(client.credentials['public_key'], command[2], command[3], expiry)
+            elif cmd == "getfile" and len(command) == 3:
+                get_file(client.credentials['public_key'], command[1], command[2])
+            elif cmd == "get" and len(command) == 2:
+                get_value(client, command[1])
+            elif cmd == "keys" and len(command) == 1:
+                get_keys(client)
             elif cmd == "info":
-                get_info()
+                get_info(client)
             elif cmd == "download_rdb":
-                download_rdb(command[1] if len(command) >= 2 else None, command[2] if len(command) == 3 else None)
-            elif cmd == "upload_rdb" and len(command) in [2, 3]:
-                upload_rdb(command[1], command[2] if len(command) == 3 else None)
+                download_rdb(client, command[1] if len(command) >= 1 else None)
+            elif cmd == "upload_rdb" and len(command) in [1, 2]:
+                upload_rdb(client, command[1])
             elif cmd == "exit":
                 break
-            elif cmd == "delete_key" and len(command) == 3:
-                delete_key(command[1], command[2])
-            elif cmd == "delete_user" and len(command) == 2:
-                delete_user(command[1])
-            elif cmd == "usage" and len(command) == 2:
-                get_storage_usage(command[1])
-            elif cmd == "upgrade" and len(command) == 3:
-                update_subscription(command[1], command[2])
+            elif cmd == "delete_key" and len(command) == 2:
+                delete_key(client, command[1])
+            elif cmd == "delete_user" and len(command) == 1:
+                delete_user(client)
+            elif cmd == "usage" and len(command) == 1:
+                get_storage_usage(client)
+            elif cmd == "upgrade" and len(command) == 2:
+                update_subscription(client, command[1])
             else:
                 print("Invalid command. Type 'help' for usage.")
         except Exception as e:

@@ -1,7 +1,9 @@
 from ecdsa import SigningKey, VerifyingKey
 import hashlib
 import json
+from client_on_host import KeyValueClient
 
+client = KeyValueClient()
 async def generateKeyPair(password):
     hash0 = hashlib.sha256(password.encode("UTF-8")).hexdigest()[:24].encode("UTF-8")
     privkey = SigningKey.from_string(hash0)
@@ -31,7 +33,15 @@ async def verifySalt(publickey, salt):
     return True
 
 async def userExists(publickey):
-    return True
+    try:
+        response = client.get_value("host_vmm", "users")
+        if "value" in response:
+            users = response["value"]
+            return publickey in users        
+        return False
+    except Exception as e:
+        print(f"Error checking user existence: {e}")
+        return False
 
 async def retrieveSaltFromData(data):
     data0 = json.loads(data)
