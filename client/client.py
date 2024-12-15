@@ -5,6 +5,7 @@ import json
 import hashlib
 import ecdsa
 from pathlib import Path
+
 BASE_URL = "http://10.20.24.88:8000"
 VM_URL = "http://127.0.0.1:8000"
 CREDENTIALS_FILE = Path.home() / ".cache" / "credentials.json"
@@ -35,14 +36,15 @@ class AuthClient:
     
     def generate_keypair(self, passphrase):
         signing_key = ecdsa.SigningKey.from_string(
-            hashlib.sha256(passphrase.encode("utf-8")).hexdigest()[:24].encode("utf-8")
-        )
+            hashlib.sha256(passphrase.encode("utf-8")).hexdigest()[:24].encode("utf-8")).to_string()
         verifying_key = signing_key.get_verifying_key()
         return {
             'private_key': signing_key.to_string().hex(),
             'public_key': verifying_key.to_string().hex(),
-            'passphrase': passphrase
+            'passphrase': passphrase,
+            'salt': None  # Initialize salt as None
         }
+    
     def handle_signup(self):
         passphrase = input("Enter passphrase for signup: ")
         keypair = self.generate_keypair(passphrase)
@@ -61,32 +63,50 @@ class AuthClient:
             sys.exit(1)
     
     def sign_request(self, body):
-        # Generate salt from request body
-        salt = hashlib.sha256(str(body).encode("utf-8")).hexdigest().encode("utf-8")
+        # Generate salt from request body if not already set
+        if not self.credentials.get('salt'):
+            self.credentials['salt'] = hashlib.sha256(str(body).encode("UTF-8")).hexdigest().encode("UTF-8")
+            self.save_credentials(self.credentials)
         
         # Sign using private key
         signing_key = ecdsa.SigningKey.from_string(
             bytes.fromhex(self.credentials['private_key'])
         )
-        signature = signing_key.sign(salt.encode()).hex()
+        signature = signing_key.sign(self.credentials['salt'].encode()).hex()
         
         return {
             "public_key": self.credentials['public_key'],
-            "salt": salt,
+            "salt": self.credentials['salt'],
             "signature": signature
         }
+    
     def authenticated_request(self, method, url, **kwargs):
         # Replace BASE_URL with VM URL for all authenticated requests
         url = url.replace(BASE_URL, self.base_url)
         
-        body = kwargs.get('json', kwargs.get('data', ''))
-        auth_headers = self.sign_request(body)
+        body = kwargs.get('json', kwargs.get('data', {}))
+        auth_body = self.sign_request(body)
         
-        headers = kwargs.pop('headers', {})
-        headers.update(auth_headers)
-        kwargs['headers'] = headers
+        if isinstance(body, dict):
+            body.update(auth_body)
+        else:
+            body = {**auth_body, "data": body}
         
-        return requests.request(method, url, **kwargs)
+        if 'json' in kwargs:
+            kwargs['json'] = body
+        else:
+            kwargs['data'] = body
+        
+        response = requests.request(method, url, **kwargs)
+        
+        if response.status_code == 200:
+            # Update salt with the hash of the successfully responded message
+            message_hash = hashlib.sha256(json.dumps(response.json()).encode("UTF-8")).hexdigest()
+            self.credentials['salt'] = message_hash
+            self.save_credentials(self.credentials)
+        
+        return response
+
 def ping(client):
     response = client.authenticated_request(
         'POST',
@@ -102,14 +122,15 @@ def echo(client, message):
     )
     print(response.json())
 
-def set_value(client, key, value,type=None, expiry=None):
+def set_value(client, key, value, type=None, expiry=None):
     data = {"key": key, "value": value, "type": type}
     if expiry:
         data["expiry"] = expiry
-        response = client.authenticated_request(
+    response = client.authenticated_request(
         'POST', 
         f"{BASE_URL}/user/{client.credentials['public_key']}/set", 
-        json=data)
+        json=data
+    )
     print(response.json())
 
 def set_file(client, key, file_path, expiry=None):
@@ -123,7 +144,12 @@ def set_file(client, key, file_path, expiry=None):
         if expiry:
             data["expiry"] = expiry
         
-        response = requests.post(f"{BASE_URL}/user/{client.credentials['public_key']}/setfile", files=files, data=data)
+        response = client.authenticated_request(
+            'POST', 
+            f"{BASE_URL}/user/{client.credentials['public_key']}/setfile", 
+            files=files, 
+            data=data
+        )
         if response.status_code == 200:
             print(response.json())
         else:
@@ -137,32 +163,54 @@ def set_file(client, key, file_path, expiry=None):
             files["file"].close()
 
 def get_file(client, key, save_path):
-    response = requests.get(f"{BASE_URL}/user/{client.credentials['public_key']}/getfile", params={"key": key})
+    response = client.authenticated_request(
+        'GET', 
+        f"{BASE_URL}/user/{client.credentials['public_key']}/getfile", 
+        params={"key": key}
+    )
     if response.status_code == 200:
         with open(save_path, "wb") as f:
             f.write(response.content)
         print(f"File saved to {save_path}")
     else:
         print(f"Error: {response.json()}")
+
 def get_value(client, key):
-    response = client.authenticated_request('GET', f"{BASE_URL}/user/{client.credentials['public_key']}/get", params={"key": key})
+    response = client.authenticated_request(
+        'GET', 
+        f"{BASE_URL}/user/{client.credentials['public_key']}/get", 
+        params={"key": key}
+    )
     print(response.json())
 
 def get_keys(client):
-    response = client.authenticated_request('GET', f"{BASE_URL}/user/{client.credentials['public_key']}/keys")
+    response = client.authenticated_request(
+        'GET', 
+        f"{BASE_URL}/user/{client.credentials['public_key']}/keys"
+    )
     print(response.json())
 
 def get_info(client):
-    response = client.authenticated_request('GET', f"{BASE_URL}/info")
+    response = client.authenticated_request(
+        'GET', 
+        f"{BASE_URL}/info"
+    )
     print(response.json())
 
 def delete_key(client, key):
-    response = client.authenticated_request('DELETE', f"{BASE_URL}/user/{client.credentials['public_key']}/key/{key}")
+    response = client.authenticated_request(
+        'DELETE', 
+        f"{BASE_URL}/user/{client.credentials['public_key']}/key/{key}"
+    )
     print(response.json())
 
 def delete_user(client):
-    response = client.authenticated_request('DELETE', f"{BASE_URL}/user/{client.credentials['public_key']}")
+    response = client.authenticated_request(
+        'DELETE', 
+        f"{BASE_URL}/user/{client.credentials['public_key']}"
+    )
     print(response.json())
+
 def download_rdb(client, save_path=None):
     url = f"{BASE_URL}/download_rdb/{client.credentials['public_key']}"
     params = {"path": save_path} if save_path else {}
@@ -180,7 +228,7 @@ def download_rdb(client, save_path=None):
                 f.write(chunk)
         print(f"RDB file saved to {save_path}")
 
-def upload_rdb(client,file_path: str):
+def upload_rdb(client, file_path: str):
     if not os.path.exists(file_path):
         print(f"Error: File not found: {file_path}")
         return
@@ -196,7 +244,10 @@ def upload_rdb(client,file_path: str):
         files["file"].close()
 
 def get_storage_usage(client):
-    response = client.authenticated_request('GET', f"{BASE_URL}/user/{client.credentials['public_key']}/usage")
+    response = client.authenticated_request(
+        'GET', 
+        f"{BASE_URL}/user/{client.credentials['public_key']}/usage"
+    )
     if response.status_code == 200:
         data = response.json()
         print(f"Storage used: {data['storage_used']/1024/1024:.2f}MB")
@@ -212,6 +263,7 @@ def update_subscription(client, tier):
         params={"tier": tier}
     )
     print(response.json())
+
 def main():
     # Command examples in help text
     help_text = """
@@ -258,8 +310,8 @@ def main():
                 print(help_text)
             elif cmd == "ping":
                 ping(client)
-            elif cmd == "echo" and len(command) == 3:
-                echo(client, command[1], command[2])
+            elif cmd == "echo" and len(command) == 2:
+                echo(client, command[1])
             elif cmd == "set" and len(command) >= 3:
                 expiry = None
                 type = None
@@ -269,10 +321,10 @@ def main():
                     type = command[4]
                 set_value(client, command[1], command[2], type, expiry)
             elif cmd == "setfile" and len(command) in [3, 4]:
-                expiry = int(command[4]) if len(command) == 4 else None
-                set_file(client.credentials['public_key'], command[2], command[3], expiry)
+                expiry = int(command[3]) if len(command) == 4 else None
+                set_file(client, command[1], command[2], expiry)
             elif cmd == "getfile" and len(command) == 3:
-                get_file(client.credentials['public_key'], command[1], command[2])
+                get_file(client, command[1], command[2])
             elif cmd == "get" and len(command) == 2:
                 get_value(client, command[1])
             elif cmd == "keys" and len(command) == 1:
