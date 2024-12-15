@@ -30,7 +30,28 @@ async def verifyRequest(publickey, sign, data):
     return retval
 
 async def verifySalt(publickey, salt):
+    try:
+        response = client.get_value("host_vmm", "users")
+        if "value" in response:
+            users = response["value"]
+            return users[publickey][salt] == salt
+        return False
+    except Exception as e:
+        print(f"Error verifying salt: {e}")
+        return False
     return True
+
+async def ReplaceSalt(publickey, data):
+    hash0 = hashlib.sha256(data.encode("UTF-8")).hexdigest().encode("UTF-8")
+    try:
+        response = client.get_value("host_vmm", "users")
+        if "value" in response:
+            users = response["value"]
+            users[publickey]["salt"] = hash0
+            client.set_value("host_vmm", "users", users)
+        return "Salt replaced"
+    except Exception as e:
+        return f"Error replacing salt: {e}"
 
 async def userExists(publickey):
     try:
