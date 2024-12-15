@@ -17,11 +17,12 @@ def echo(user_id, message):
     response = requests.post(f"{BASE_URL}/user/{user_id}/echo", params={"message": message})
     print(response.json())
 
-def set_value(user_id, key, value, typ=None,expiry=None):
-    if not user_id:
-        print("Error: user_id is required")
-        return
-    data = {"key": key, "value": value, "type": typ}
+def set_value(user_id, key, value, value_type=None, expiry=None):
+    data = {
+        "key": key,
+        "value": value,
+        "type": value_type
+    }
     if expiry:
         data["expiry"] = expiry
     response = requests.post(f"{BASE_URL}/user/{user_id}/set", json=data)
@@ -222,6 +223,8 @@ def main():
                 type = None
                 if len(command) >= 5 and command[4].isdigit():
                     expiry = int(command[4])
+                else:
+                    type = command[4]
                 if len(command) >= 6:
                     type = command[5]
                 set_value(command[1], command[2], command[3], type, expiry)
