@@ -35,18 +35,24 @@ def set_file(user_id, key, file_path, expiry=None):
         print(f"Error: File not found: {file_path}")
         return
     
-    files = {"file": open(file_path, "rb")}
-    data = {"key": key}
-    if expiry:
-        data["expiry"] = expiry
-    
     try:
+        files = {"file": open(file_path, "rb")}
+        data = {"key": key}
+        if expiry:
+            data["expiry"] = expiry
+        
         response = requests.post(f"{BASE_URL}/user/{user_id}/setfile", files=files, data=data)
-        print(response.json())
+        if response.status_code == 200:
+            print(response.json())
+        else:
+            print(f"Error: {response.json()['detail']}")
+    except requests.exceptions.RequestException as e:
+        print(f"Network error: {str(e)}")
     except Exception as e:
         print(f"Error uploading file: {str(e)}")
     finally:
-        files["file"].close()
+        if 'files' in locals():
+            files["file"].close()
 
 def get_file(user_id, key, save_path):
     if not user_id:
@@ -136,6 +142,33 @@ def upload_rdb(file_path: str, user_id: str):
     finally:
         files["file"].close()
 
+def get_storage_usage(user_id):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    try:
+        response = requests.get(f"{BASE_URL}/user/{user_id}/usage")
+        if response.status_code == 200:
+            data = response.json()
+            print(f"Storage used: {data['storage_used']/1024/1024:.2f}MB")
+            print(f"Storage limit: {data['storage_limit']/1024/1024:.2f}MB")
+            print(f"Subscription tier: {data['subscription']}")
+        else:
+            print(f"Error: {response.text}")
+    except requests.exceptions.RequestException as e:
+        print(f"Network error: {str(e)}")
+    except Exception as e:
+        print(f"Error: {str(e)}")
+
+def update_subscription(user_id, tier):
+    if not user_id:
+        print("Error: user_id is required")
+        return
+    response = requests.post(
+        f"{BASE_URL}/user/{user_id}/subscription",
+        params={"tier": tier}
+    )
+    print(response.json())
 def main():
     # Command examples in help text
     help_text = """
@@ -158,7 +191,8 @@ def main():
     - delete_key <user_id> <key>
     - delete_user <user_id>
     - delete_users
-    
+    - usage <user_id>            # Get storage usage stats
+    - upgrade <user_id> <tier>   # Change subscription tier (basic/premium)   
     Examples:
     > ping user1
     > echo user1 hello
@@ -207,6 +241,10 @@ def main():
                 delete_key(command[1], command[2])
             elif cmd == "delete_user" and len(command) == 2:
                 delete_user(command[1])
+            elif cmd == "usage" and len(command) == 2:
+                get_storage_usage(command[1])
+            elif cmd == "upgrade" and len(command) == 3:
+                update_subscription(command[1], command[2])
             else:
                 print("Invalid command. Type 'help' for usage.")
         except Exception as e:
@@ -215,5 +253,5 @@ def main():
 if __name__ == "__main__":
     args = sys.argv[1:]
     if len(args) >= 1:
-        BASE_URL = f"http://{args[0]}:8000"
+        BASE_URL = f"http://{args[0]}:{args[1]}"
     main()

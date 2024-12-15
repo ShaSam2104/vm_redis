@@ -19,10 +19,21 @@ app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 ALLOWED_EXTENSIONS: Set[str] = {'.txt', '.pdf', '.doc', '.docx', '.zip', '.png', '.jpg', '.jpeg'}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB limit
+USER_SUBSCRIPTIONS = {
+    'basic': {'storage_limit': 75_000_000},  # 75MB
+    'premium': {'storage_limit': 150_000_000}  # 150MB
+}
 # In-memory storage for user dictionaries
-user_data: Dict[str, Dict[str, Dict[str, Union[str, bytes, Optional[datetime]]]]] = {}
-
+# Add to user_data structure
+user_data: Dict[str, Dict[str, Any]] = {
+    # user_id: {
+    #    'files': {...},
+    #    'subscription': 'basic',
+    #    'storage_used': 0
+    # }
+}
+# Add at top of app.py with other constants
+MAX_USERS = 10
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Restrict to specific IPs in production
@@ -45,10 +56,18 @@ class SetRequest(BaseModel):
     type: Optional[str] = None  # Add type field
     expiry: Optional[int] = None  # Expiry time in seconds
 
+def check_user_limit():
+    if len(user_data) >= MAX_USERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Server user limit reached (max {MAX_USERS} users)"
+        )
+
 @app.post("/user/{user_id}/ping")
 async def ping(user_id: str):
     if user_id not in user_data:
-        user_data[user_id] = {}
+        check_user_limit()  # Check before creating new user
+        user_data[user_id] = {'files': {}, 'subscription': 'basic', 'storage_used': 0}
     return {"response": "PONG"}
 
 @app.post("/user/{user_id}/echo")
@@ -60,7 +79,8 @@ async def echo(user_id: str, message: str):
 @app.post("/user/{user_id}/set")
 async def set_value(user_id: str, request: SetRequest):
     if user_id not in user_data:
-        user_data[user_id] = {}
+        check_user_limit()  # Check before creating new user
+        user_data[user_id] = {'files': {}, 'subscription': 'basic', 'storage_used': 0}
     
     try:
         # Convert value based on specified type
@@ -91,33 +111,38 @@ async def set_value(user_id: str, request: SetRequest):
 
 @app.post("/user/{user_id}/setfile")
 async def set_file(user_id: str, key: str = Form(...), file: UploadFile = File(...), expiry: Optional[int] = Form(None)):
-    try:
-        if user_id not in user_data:
-            user_data[user_id] = {}
-        
-        file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ''
-        content_type = file.content_type or mimetypes.guess_type(file.filename)[0]
-        
-        content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail=f"File size exceeds {MAX_FILE_SIZE/1024/1024}MB limit")
-        
-        expiry_time = datetime.utcnow() + timedelta(seconds=expiry) if expiry else None
-        encoded_content = base64.b64encode(content).decode('utf-8')
-        
-        user_data[user_id][key] = {
-            "value": encoded_content,
-            "expiry": expiry_time,
-            "type": "binary",
-            "content_type": content_type,
-            "extension": file_ext,
-            "original_filename": file.filename
-        }
-        return {"response": "OK"}
-        
-    except Exception as e:
-        logger.error(f"Error uploading file: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+    if user_id not in user_data:
+        check_user_limit()  # Check before creating new user
+        user_data[user_id] = {'files': {}, 'subscription': 'basic', 'storage_used': 0}
+    elif 'files' not in user_data[user_id]:
+        user_data[user_id]['files'] = {}
+    
+    content = await file.read()
+    file_size = len(content)
+    
+    # Check storage limit
+    subscription = user_data[user_id].get('subscription', 'basic')
+    storage_limit = USER_SUBSCRIPTIONS[subscription]['storage_limit']
+    current_usage = user_data[user_id].get('storage_used', 0)
+    
+    if current_usage + file_size > storage_limit:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Storage limit exceeded. Available: {storage_limit - current_usage} bytes"
+        )
+    
+    # Store file data
+    content_b64 = base64.b64encode(content).decode()
+    user_data[user_id]['files'][key] = {
+        "value": content_b64,
+        "type": "binary",
+        "content_type": file.content_type,
+        "original_filename": file.filename,
+        "expiry": datetime.utcnow() + timedelta(seconds=expiry) if expiry else None
+    }
+    
+    user_data[user_id]['storage_used'] = current_usage + file_size
+    return {"response": "OK"}
 
 @app.get("/user/{user_id}/get")
 async def get_value(user_id: str, key: str):
@@ -137,7 +162,12 @@ async def get_value(user_id: str, key: str):
 async def get_keys(user_id: str):
     if user_id not in user_data:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"keys": list(user_data[user_id].keys())}
+    
+    # Get keys from both regular values and files
+    regular_keys = set(user_data[user_id].keys()) - {'files', 'storage_used', 'subscription'}
+    file_keys = set(user_data[user_id].get('files', {}).keys())
+    
+    return {"keys": list(regular_keys | file_keys)}
 
 @app.get("/info")
 async def get_info():
@@ -187,42 +217,38 @@ async def psync_command(replica_id: str, offset: int):
 async def get_all_users():
     return user_data
 
-@app.post("/user/{user_id}/getfile")
+@app.get("/user/{user_id}/getfile")
 async def get_file(user_id: str, key: str):
     try:
-        # Check if user and key exist
+        # Check if user and file exist
         if user_id not in user_data:
             raise HTTPException(status_code=404, detail="User not found")
-        if key not in user_data[user_id]:
+        if 'files' not in user_data[user_id] or key not in user_data[user_id]['files']:
             raise HTTPException(status_code=404, detail="File not found")
         
-        data = user_data[user_id][key]
+        data = user_data[user_id]['files'][key]  # Changed this line to look in 'files'
         
         # Check expiry
         if data["expiry"] and data["expiry"] < datetime.utcnow():
-            del user_data[user_id][key]
+            del user_data[user_id]['files'][key]  # Also update this line
             raise HTTPException(status_code=404, detail="File expired")
         
         # Decode file content
         try:
             content = base64.b64decode(data["value"])
-            return StreamingResponse(io.BytesIO(content), media_type=data.get("content_type", "application/octet-stream"), headers={
-                "Content-Disposition": f"attachment; filename={data.get('original_filename', key)}"
-            })
-            
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error retrieving file: {str(e)}"
+            return StreamingResponse(
+                io.BytesIO(content), 
+                media_type=data.get("content_type", "application/octet-stream"),
+                headers={
+                    "Content-Disposition": f"attachment; filename={data.get('original_filename', key)}"
+                }
             )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error retrieving file: {str(e)}")
             
     except Exception as e:
         logger.error(f"Error in get_file: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal Server Error: {str(e)}"
-        )   
-
+        raise HTTPException(status_code=500, detail=str(e))
 @app.get("/download_rdb/{user_id}")
 async def download_user_rdb(user_id: str, path: Optional[str] = None):
     if user_id not in user_data:
@@ -300,7 +326,57 @@ async def upload_all_rdb(file: Optional[UploadFile] = None, path: Optional[str] 
         logger.error(f"Error uploading RDB file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
-
+@app.get("/user/{user_id}/usage")
+async def get_user_usage(user_id: str):
+    if user_id not in user_data:
+        # Initialize user with default structure
+        user_data[user_id] = {
+            'files': {},
+            'subscription': 'basic',
+            'storage_used': 0
+        }
+    
+    # Calculate storage from binary files
+    storage_used = 0
+    if 'files' in user_data[user_id]:
+        storage_used = sum(
+            len(base64.b64decode(data["value"]))
+            for data in user_data[user_id]['files'].values()
+            if data.get("type") == "binary"
+        )
+    
+    subscription = user_data[user_id].get('subscription', 'basic')
+    storage_limit = USER_SUBSCRIPTIONS[subscription]['storage_limit']
+    
+    return {
+        "storage_used": storage_used,
+        "storage_limit": storage_limit,
+        "subscription": subscription
+    }
+@app.post("/user/{user_id}/subscription")
+async def update_subscription(user_id: str, tier: str):
+    if tier not in USER_SUBSCRIPTIONS:
+        raise HTTPException(status_code=400, detail="Invalid subscription tier")
+    
+    if user_id not in user_data:
+        check_user_limit()  # Check before creating new user
+        user_data[user_id] = {'files': {}, 'subscription': 'basic', 'storage_used': 0}
+    
+    # Calculate current storage usage
+    current_usage = user_data[user_id].get('storage_used', 0)
+    target_limit = USER_SUBSCRIPTIONS[tier]['storage_limit']
+    
+    # Check if downgrading and storage exceeds new limit
+    if (tier == 'basic' and 
+        user_data[user_id].get('subscription') == 'premium' and 
+        current_usage > target_limit):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot downgrade: Current storage usage ({current_usage/1024/1024:.2f}MB) exceeds {tier} tier limit ({target_limit/1024/1024:.2f}MB)"
+        )
+    
+    user_data[user_id]['subscription'] = tier
+    return {"status": "OK", "subscription": tier}
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
