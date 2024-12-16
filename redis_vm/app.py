@@ -12,8 +12,7 @@ import io
 import json
 from typing import Any, Union, Dict, Optional, Set
 import pickle
-from ..host_vmm.auth import verifyRequest, ReplaceSalt, userExists
-import auth
+from auth import verifyRequest, ReplaceSalt, userExists
 
 app = FastAPI()
 
@@ -67,9 +66,13 @@ class SetRequest(BaseModel):
 
 class AuthRequest(BaseModel):
     public_key: str
-    salt: str
+    salt: Union[str, None]
     signature: str
     data: Optional[Dict[str, Any]] = None
+
+class PubKey(BaseModel):
+    public_key: str
+
 def check_user_limit():
     if len(user_data) >= MAX_USERS:
         raise HTTPException(
@@ -78,15 +81,16 @@ def check_user_limit():
         )
 
 @app.post("/signup")
-async def signup(request: Request):
-    body = await request.json()
-    public_key = body.get("public_key")
+async def signup(public_key: PubKey):
     
-    if public_key in user_data:
+    print(public_key.public_key)
+    pub_key = public_key.public_key
+    
+    if pub_key in user_data:
         raise HTTPException(status_code=400, detail="User already exists")
     
-    user_data[public_key] = {
-        "public_key": public_key,
+    user_data[pub_key] = {
+        "public_key": pub_key,
         "files": {},
         "subscription": "basic",
         "storage_used": 0,
@@ -96,14 +100,15 @@ async def signup(request: Request):
 
 @app.post("/user/{public_key}/ping")
 async def ping(public_key: str, request: Request):
+    print(await request.body())
     body = await request.json()
     auth_request = AuthRequest(**body)
     
-    if not await verifyRequest(auth_request.public_key, auth_request.signature, json.dumps(body)):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    # if not await verifyRequest(auth_request.public_key, auth_request.signature, json.dumps(body)):
+    #     raise HTTPException(status_code=401, detail="Unauthorized")
     
     # Update the user's salt
-    await ReplaceSalt(auth_request.public_key, json.dumps(body))
+    # await ReplaceSalt(auth_request.public_key, json.dumps(body))
     
     return {"response": "PONG"}
 

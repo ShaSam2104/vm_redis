@@ -16,7 +16,7 @@ class AuthClient:
         self.credentials = self.load_credentials()
         self.ensure_auth()
         if self.credentials:
-            self.base_url = f"http://{self.credentials['vm_ip']}:8000"
+            self.base_url = f"http://{self.credentials['vm_ip']}:8091"
     
     def load_credentials(self):
         if CREDENTIALS_FILE.exists():
@@ -56,7 +56,7 @@ class AuthClient:
         if response.status_code == 200:
             creds = {**keypair, 'vm_ip': response.json()['status']['ip']}
             self.save_credentials(creds)
-            self.base_url = f"http://{creds['vm_ip']}:8000"
+            self.base_url = f"http://{creds['vm_ip']}:8091"
             print("Signup successful!")
         else:
             print("Signup failed:", response.json())
@@ -74,7 +74,7 @@ class AuthClient:
         signing_key = ecdsa.SigningKey.from_string(
             bytes.fromhex(self.credentials['private_key'])
         )
-        signature = signing_key.sign(data_to_sign.encode()).hex()
+        signature = signing_key.sign(str(data_to_sign).encode()).hex()
         
         return {
             "public_key": self.credentials['public_key'],
@@ -86,7 +86,7 @@ class AuthClient:
         # Replace BASE_URL with VM URL for all authenticated requests
         url = url.replace(BASE_URL, self.base_url)
         
-        body = kwargs.get('json', kwargs.get('data', {}))
+        body = kwargs.get('json', kwargs.get('data', kwargs.get("data", kwargs.get("params", {}))))
         auth_body = self.sign_request(body)
         
         if isinstance(body, dict):
@@ -94,12 +94,15 @@ class AuthClient:
         else:
             body = {**auth_body, "data": body}
         
-        if 'json' in kwargs:
-            kwargs['json'] = body
-        else:
-            kwargs['data'] = body
         
-        response = requests.request(method, url, **kwargs)
+        kwargs.update(body)
+        
+        if method == "POST":
+            if "setfile" in url:
+                body["file"] = kwargs["files"]["file"]
+            response = requests.request(method, url, json=body)
+        else:
+            response = requests.request(method, url, params=body)
         
         if response.status_code == 200:
             # Update salt with the hash of the successfully responded message
@@ -120,7 +123,7 @@ def echo(client, message):
     response = client.authenticated_request(
         'POST', 
         f"{BASE_URL}/user/{client.credentials['public_key']}/echo",
-        params={"message": message}
+        json={"message": message}
     )
     print(response.json())
 
@@ -168,7 +171,7 @@ def get_file(client, key, save_path):
     response = client.authenticated_request(
         'GET', 
         f"{BASE_URL}/user/{client.credentials['public_key']}/getfile", 
-        params={"key": key}
+        json={"key": key}
     )
     if response.status_code == 200:
         with open(save_path, "wb") as f:
@@ -215,8 +218,8 @@ def delete_user(client):
 
 def download_rdb(client, save_path=None):
     url = f"{BASE_URL}/download_rdb/{client.credentials['public_key']}"
-    params = {"path": save_path} if save_path else {}
-    response = requests.get(url, params=params, stream=True)
+    json = {"path": save_path} if save_path else {}
+    response = requests.get(url, json=json, stream=True)
     
     if save_path:
         with open(save_path, 'wb') as f:
@@ -262,7 +265,7 @@ def update_subscription(client, tier):
     response = client.authenticated_request(
         'POST',
         f"{BASE_URL}/user/{client.credentials['public_key']}/subscription",
-        params={"tier": tier}
+        json={"tier": tier}
     )
     print(response.json())
 
@@ -317,8 +320,11 @@ def main():
             elif cmd == "set" and len(command) >= 3:
                 expiry = None
                 type = None
-                if len(command) >= 4 and command[3].isdigit():
-                    expiry = int(command[3])
+                if len(command) >= 4:
+                    if command[3].isdigit():
+                        expiry = int(command[3])
+                    else:
+                        type = command[3]
                 if len(command) >= 5:
                     type = command[4]
                 set_value(client, command[1], command[2], type, expiry)
