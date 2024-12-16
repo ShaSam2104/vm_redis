@@ -1,0 +1,39 @@
+sign up: assign a vm to the user -> return the ip of that vm
+
+verify
+
+locate vm:
+
+	verify
+	return the user vm
+
+gateway: load balancer
+
+each vm -> 2G
+assuming max lim: 1.5G for 10 users -> 150M (for premium subscription) / 75M (for standard subscription)
+
+assume: from redis import set, get
+
+handler = vmh.VM_Handler()
+handler.get_num_vms()
+
+
+usr = "host_vmm"
+set(key, value, usr) -> bool
+
+get(key, usr) -> value
+
+redis struct:
+
+	"Users": {
+		"pubKey": {
+			"ip": "ip of the assigned VM",
+			"salt": "salt"
+		}
+	}
+	"VMs": {
+		"VM_ID": {
+			"num_users": int
+			"ip": str
+		}
+	}

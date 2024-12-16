@@ -13,6 +13,7 @@ import json
 from typing import Any, Union, Dict, Optional, Set
 import pickle
 from ..host_vmm.auth import verifyRequest, ReplaceSalt, userExists
+import auth
 
 app = FastAPI()
 
@@ -116,7 +117,6 @@ async def echo(user_id: str, message: str):
 async def set_value(user_id: str, request: SetRequest):
     if user_id not in user_data:
         check_user_limit()  # Check before creating new user
-        user_data[user_id] = {'files': {}, 'subscription': 'basic', 'storage_used': 0}
     
     try:
         # Convert value based on specified type
@@ -182,6 +182,7 @@ async def set_file(user_id: str, key: str = Form(...), file: UploadFile = File(.
 
 @app.get("/user/{user_id}/get")
 async def get_value(user_id: str, key: str):
+    print(user_id, user_data, sep="\n")
     if user_id not in user_data:
         raise HTTPException(status_code=404, detail="User not found")
     if key not in user_data[user_id]:
@@ -192,6 +193,7 @@ async def get_value(user_id: str, key: str):
         del user_data[user_id][key]
         raise HTTPException(status_code=404, detail="Key expired")
     
+    print(data["value"])
     return {"value": data["value"], "type": data.get("type", "text")}
 
 @app.get("/user/{user_id}/keys")

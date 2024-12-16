@@ -6,7 +6,7 @@ import hashlib
 import ecdsa
 from pathlib import Path
 
-BASE_URL = "http://10.20.24.88:8000"
+BASE_URL = "http://10.20.24.2:8000"
 VM_URL = "http://127.0.0.1:8000"
 CREDENTIALS_FILE = Path.home() / ".cache" / "credentials.json"
 
@@ -36,11 +36,11 @@ class AuthClient:
     
     def generate_keypair(self, passphrase):
         signing_key = ecdsa.SigningKey.from_string(
-            hashlib.sha256(passphrase.encode("utf-8")).hexdigest()[:24].encode("utf-8")).to_string()
-        verifying_key = signing_key.get_verifying_key()
+            hashlib.sha256(passphrase.encode("utf-8")).hexdigest()[:24].encode("utf-8"))
+        verify_key = signing_key.get_verifying_key()
         return {
             'private_key': signing_key.to_string().hex(),
-            'public_key': verifying_key.to_string().hex(),
+            'public_key': verify_key.to_string().hex(),
             'passphrase': passphrase,
             'salt': None  # Initialize salt as None
         }
@@ -49,12 +49,12 @@ class AuthClient:
         passphrase = input("Enter passphrase for signup: ")
         keypair = self.generate_keypair(passphrase)
         
-        response = requests.post(f"{BASE_URL}/signup", json={
-            "pass_phrase": keypair['passphrase'],
+        response = requests.post(f"{BASE_URL}/signup/", json={
+            "passphrase": passphrase
         })
         
         if response.status_code == 200:
-            creds = {**keypair, 'vm_ip': response.json()['vm_ip']}
+            creds = {**keypair, 'vm_ip': response.json()['status']['ip']}
             self.save_credentials(creds)
             self.base_url = f"http://{creds['vm_ip']}:8000"
             print("Signup successful!")
