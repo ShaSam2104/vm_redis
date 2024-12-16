@@ -1,7 +1,7 @@
 from ecdsa import SigningKey, VerifyingKey
 import hashlib
 import json
-from client_on_host import KeyValueClient
+from ..client.client_on_host import KeyValueClient
 
 client = KeyValueClient()
 async def generateKeyPair(password):

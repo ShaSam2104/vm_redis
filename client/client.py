@@ -50,7 +50,7 @@ class AuthClient:
         keypair = self.generate_keypair(passphrase)
         
         response = requests.post(f"{BASE_URL}/signup", json={
-            "public_key": keypair['public_key']
+            "pass_phrase": keypair['passphrase'],
         })
         
         if response.status_code == 200:
@@ -64,15 +64,17 @@ class AuthClient:
     
     def sign_request(self, body):
         # Generate salt from request body if not already set
-        if not self.credentials.get('salt'):
-            self.credentials['salt'] = hashlib.sha256(str(body).encode("UTF-8")).hexdigest().encode("UTF-8")
-            self.save_credentials(self.credentials)
-        
+        # if not self.credentials.get('salt'):
+        #     self.credentials['salt'] = hashlib.sha256(str(body).encode("UTF-8")).hexdigest()
+        #     self.save_credentials(self.credentials)
+        # Concatenate salt and public_key
+        data_to_sign = {"publickey":self.credentials['public_key'], "salt":self.credentials['salt'], **body}
+    
         # Sign using private key
         signing_key = ecdsa.SigningKey.from_string(
             bytes.fromhex(self.credentials['private_key'])
         )
-        signature = signing_key.sign(self.credentials['salt'].encode()).hex()
+        signature = signing_key.sign(data_to_sign.encode()).hex()
         
         return {
             "public_key": self.credentials['public_key'],

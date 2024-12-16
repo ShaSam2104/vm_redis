@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form,Request
 from pydantic import BaseModel
 from typing import Dict, Optional, Union, Set
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -12,6 +12,7 @@ import io
 import json
 from typing import Any, Union, Dict, Optional, Set
 import pickle
+from ..host_vmm.auth import verifyRequest, ReplaceSalt, userExists
 
 app = FastAPI()
 
@@ -32,6 +33,13 @@ user_data: Dict[str, Dict[str, Any]] = {
     #    'storage_used': 0
     # }
 }
+
+class AuthRequest(BaseModel):
+    public_key: str
+    salt: str
+    signature: str
+    data: Optional[Dict[str, Any]] = None
+
 # Add at top of app.py with other constants
 MAX_USERS = 10
 app.add_middleware(
@@ -56,6 +64,11 @@ class SetRequest(BaseModel):
     type: Optional[str] = None  # Add type field
     expiry: Optional[int] = None  # Expiry time in seconds
 
+class AuthRequest(BaseModel):
+    public_key: str
+    salt: str
+    signature: str
+    data: Optional[Dict[str, Any]] = None
 def check_user_limit():
     if len(user_data) >= MAX_USERS:
         raise HTTPException(
@@ -63,11 +76,34 @@ def check_user_limit():
             detail=f"Server user limit reached (max {MAX_USERS} users)"
         )
 
-@app.post("/user/{user_id}/ping")
-async def ping(user_id: str):
-    if user_id not in user_data:
-        check_user_limit()  # Check before creating new user
-        user_data[user_id] = {'files': {}, 'subscription': 'basic', 'storage_used': 0}
+@app.post("/signup")
+async def signup(request: Request):
+    body = await request.json()
+    public_key = body.get("public_key")
+    
+    if public_key in user_data:
+        raise HTTPException(status_code=400, detail="User already exists")
+    
+    user_data[public_key] = {
+        "public_key": public_key,
+        "files": {},
+        "subscription": "basic",
+        "storage_used": 0,
+        "salt": None  # Initialize salt as None
+    }
+    return "User signed up successfully"
+
+@app.post("/user/{public_key}/ping")
+async def ping(public_key: str, request: Request):
+    body = await request.json()
+    auth_request = AuthRequest(**body)
+    
+    if not await verifyRequest(auth_request.public_key, auth_request.signature, json.dumps(body)):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    # Update the user's salt
+    await ReplaceSalt(auth_request.public_key, json.dumps(body))
+    
     return {"response": "PONG"}
 
 @app.post("/user/{user_id}/echo")
