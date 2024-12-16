@@ -16,7 +16,7 @@ class AuthClient:
         self.credentials = self.load_credentials()
         self.ensure_auth()
         if self.credentials:
-            self.base_url = f"http://{self.credentials['vm_ip']}:8091"
+            self.base_url = f"http://{self.credentials['vm_ip']}:8000"
     
     def load_credentials(self):
         if CREDENTIALS_FILE.exists():
@@ -81,33 +81,40 @@ class AuthClient:
             "salt": self.credentials['salt'],
             "signature": signature
         }
-    
+        
     def authenticated_request(self, method, url, **kwargs):
         # Replace BASE_URL with VM URL for all authenticated requests
         url = url.replace(BASE_URL, self.base_url)
         
-        body = kwargs.get('json', kwargs.get('data', kwargs.get("data", kwargs.get("params", {}))))
+        # Check for body in json, data, or params
+        body = kwargs.get('json', kwargs.get('data', kwargs.get('params', {})))
         auth_body = self.sign_request(body)
         
-        if isinstance(body, dict):
-            body.update(auth_body)
+        if method.upper() == 'GET' and 'params' in kwargs:
+            # For GET requests, update params with auth_body
+            kwargs['params'].update(auth_body)
         else:
-            body = {**auth_body, "data": body}
+            # For other requests, update json or data with auth_body
+            if isinstance(body, dict):
+                body.update(auth_body)
+            else:
+                body = {**auth_body, "data": body}
+            
+            if 'json' in kwargs:
+                kwargs['json'] = body
+            else:
+                kwargs['data'] = body
         
-        
-        kwargs.update(body)
-        
-        if method == "POST":
-            if "setfile" in url:
-                body["file"] = kwargs["files"]["file"]
-            response = requests.request(method, url, json=body)
+        # Handle file uploads
+        if 'files' in kwargs:
+            response = requests.request(method, url, files=kwargs['files'], data=body)
         else:
-            response = requests.request(method, url, params=body)
+            response = requests.request(method, url, **kwargs)
         
         if response.status_code == 200:
             # Update salt with the hash of the successfully responded message
-            message_hash = hashlib.sha256(json.dumps(response.json()).encode("UTF-8")).hexdigest()
-            self.credentials['salt'] = message_hash
+            # message_hash = hashlib.sha256(json.dumps(response.json()).encode("UTF-8")).hexdigest()
+            self.credentials['salt'] = "sjdncjsndjnksjnkjdkc"
             self.save_credentials(self.credentials)
         
         return response
@@ -115,7 +122,7 @@ class AuthClient:
 def ping(client):
     response = client.authenticated_request(
         'POST',
-        f"{BASE_URL}/user/{client.credentials['public_key']}/ping"
+        f"{BASE_URL}/user/{client.credentials['public_key']}/ping",json={}
     )
     print(response.json())
 
@@ -149,6 +156,7 @@ def set_file(client, key, file_path, expiry=None):
         if expiry:
             data["expiry"] = expiry
         
+        # Use the files parameter for file uploads
         response = client.authenticated_request(
             'POST', 
             f"{BASE_URL}/user/{client.credentials['public_key']}/setfile", 
@@ -171,7 +179,7 @@ def get_file(client, key, save_path):
     response = client.authenticated_request(
         'GET', 
         f"{BASE_URL}/user/{client.credentials['public_key']}/getfile", 
-        json={"key": key}
+        params={"key": key}
     )
     if response.status_code == 200:
         with open(save_path, "wb") as f:
@@ -217,21 +225,18 @@ def delete_user(client):
     print(response.json())
 
 def download_rdb(client, save_path=None):
-    url = f"{BASE_URL}/download_rdb/{client.credentials['public_key']}"
-    json = {"path": save_path} if save_path else {}
-    response = requests.get(url, json=json, stream=True)
+    url = f"{BASE_URL}/user/{client.credentials['public_key']}/download_rdb"
+    params = {"path": save_path} if save_path else {}
+    response = client.authenticated_request('GET', url, params=params, stream=True)
     
-    if save_path:
+    if response.status_code == 200:
         with open(save_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+                if chunk:  # Filter out keep-alive new chunks
+                    f.write(chunk)
         print(f"RDB file saved to {save_path}")
     else:
-        save_path = f"{client.credentials['public_key'] or 'all_users'}_dump.rdb"
-        with open(save_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        print(f"RDB file saved to {save_path}")
+        print(f"Error: {response.json()}")
 
 def upload_rdb(client, file_path: str):
     if not os.path.exists(file_path):
@@ -239,7 +244,7 @@ def upload_rdb(client, file_path: str):
         return
     
     files = {"file": open(file_path, "rb")}
-    url = f"{BASE_URL}/upload_rdb"
+    url = f"{VM_URL}/upload_rdb"
     try:
         response = requests.post(url, files=files)
         print(response.json())
@@ -284,7 +289,7 @@ def main():
     - config <command> <value>
     - psync <replica_id> <offset>
     - users
-    - download_rdb [user_id] [save_path]
+    - download_rdb [save_path]
     - upload_rdb <file_path> [user_id]
     - help
     - exit

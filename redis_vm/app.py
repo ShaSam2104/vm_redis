@@ -220,16 +220,21 @@ async def get_info():
         "users_count": len(user_data),
     }
     return info
+
 @app.delete("/user/{user_id}/key/{key}")
 async def delete_key(user_id: str, key: str):
     if user_id not in user_data:
         raise HTTPException(status_code=404, detail="User not found")
-    if key not in user_data[user_id]:
-        raise HTTPException(status_code=404, detail="Key not found")
     
-    del user_data[user_id][key]
-    return {"response": f"Key '{key}' deleted successfully"}
-
+    if key in user_data[user_id]:
+        del user_data[user_id][key]
+        return {"response": f"Key '{key}' deleted successfully"}
+    
+    if 'files' in user_data[user_id] and key in user_data[user_id]['files']:
+        del user_data[user_id]['files'][key]
+        return {"response": f"File key '{key}' deleted successfully"}
+    
+    raise HTTPException(status_code=404, detail="Key not found")
 @app.delete("/user/{user_id}")
 async def delete_user(user_id: str):
     if user_id not in user_data:
@@ -292,18 +297,19 @@ async def get_file(user_id: str, key: str):
     except Exception as e:
         logger.error(f"Error in get_file: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-@app.get("/download_rdb/{user_id}")
+    
+@app.get("/user/{user_id}/download_rdb")
 async def download_user_rdb(user_id: str, path: Optional[str] = None):
     if user_id not in user_data:
         raise HTTPException(status_code=404, detail="User not found")
     
     rdb_data = {user_id: user_data[user_id]}
     rdb_bytes = pickle.dumps(rdb_data)
-    
-    if path:
-        with open(path, 'wb') as f:
-            f.write(rdb_bytes)
-        return {"response": f"RDB file saved to {path}"}
+    print(rdb_data)
+    # if path:
+    #     with open(path, 'wb') as f:
+    #         f.write(rdb_bytes)
+    #     return {"response": f"RDB file saved to {path}"}
     
     return StreamingResponse(io.BytesIO(rdb_bytes), media_type="application/octet-stream", headers={
         "Content-Disposition": f"attachment; filename={user_id}_dump.rdb"
